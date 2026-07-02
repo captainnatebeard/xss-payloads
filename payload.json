@@ -1,1 +1,1 @@
-{"test": "<img src=x onerror=alert(document.domain)>"}
+{"message": "<img src=x onerror=alert(document.domain)>"}
