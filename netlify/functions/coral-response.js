@@ -5,7 +5,8 @@ exports.handler = async (event) => {
   const body = event.body || '';
 
   console.log('=== Request ===', event.httpMethod, path, 'Target:', target);
-  console.log('Body:', body.substring(0, 300));
+  console.log('All Headers:', JSON.stringify(headers));
+  console.log('Body:', body.substring(0, 500));
 
   // Handle OPTIONS preflight
   if (event.httpMethod === 'OPTIONS') {
