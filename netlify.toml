@@ -1,8 +1,19 @@
 [build]
   functions = "netlify/functions"
 
+# Route ALL requests to the coral-response function
+# This catches any path the Coral client might hit
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/coral-response"
   status = 200
   force = true
+
+# Custom headers for all responses - needed for Coral client CORS
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "POST, GET, OPTIONS, PUT"
+    Access-Control-Allow-Headers = "Content-Type, x-amz-target, x-amzn-target, x-amz-date, authorization, x-amz-security-token, x-amz-content-sha256, amz-sdk-invocation-id, amz-sdk-request"
+    Access-Control-Max-Age = "86400"
